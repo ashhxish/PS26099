@@ -1,0 +1,141 @@
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import * as React from "react";
+
+import { PageHeader } from "@/components/PageHeader";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { useAccessibilitySettings } from "@/hooks/useAccessibilitySettings";
+import { apiErrorMessage } from "@/services/api";
+import { getSettings, updateSettings } from "@/services/settings";
+import type { SystemSettings } from "@/types";
+
+const THRESHOLD_FIELDS: { key: keyof SystemSettings; label: string }[] = [
+  { key: "threshold_auto", label: "Auto Threshold (%)" },
+  { key: "threshold_review", label: "Review Threshold (%)" },
+  { key: "threshold_low", label: "Low Confidence Threshold (%)" },
+];
+
+const WEIGHT_FIELDS: { key: keyof SystemSettings; label: string }[] = [
+  { key: "weight_description", label: "Description" },
+  { key: "weight_specification", label: "Specification" },
+  { key: "weight_classification", label: "Classification" },
+  { key: "weight_uom", label: "UOM" },
+  { key: "weight_attributes", label: "Attributes" },
+  { key: "weight_grade", label: "Grade" },
+  { key: "weight_dimension", label: "Dimension" },
+  { key: "weight_standard", label: "Standard" },
+  { key: "weight_manufacturer", label: "Manufacturer (when critical)" },
+  { key: "weight_function", label: "Function" },
+  { key: "weight_criticality", label: "Criticality" },
+];
+
+export default function Settings() {
+  const queryClient = useQueryClient();
+  const { data } = useQuery({ queryKey: ["settings"], queryFn: getSettings });
+  const [form, setForm] = React.useState<SystemSettings | null>(null);
+  const { decreaseFont, resetFont, increaseFont, language, setLanguage } = useAccessibilitySettings();
+
+  React.useEffect(() => {
+    if (data && !form) setForm(data);
+  }, [data, form]);
+
+  const mutation = useMutation({
+    mutationFn: (payload: Partial<SystemSettings>) => updateSettings(payload),
+    onSuccess: (updated) => {
+      setForm(updated);
+      queryClient.setQueryData(["settings"], updated);
+    },
+  });
+
+  if (!form) return <p className="text-sm text-slate-400">Loading...</p>;
+
+  const weightSum = WEIGHT_FIELDS.reduce((sum, f) => sum + Number(form[f.key] ?? 0), 0);
+
+  return (
+    <div className="mx-auto max-w-3xl space-y-6">
+      <PageHeader
+        breadcrumbs={[{ label: "Governance" }, { label: "Rules & Policies" }]}
+        title="Rules & Policies"
+        subtitle="Decision thresholds and scoring weights used by the AI harmonization engine, plus accessibility preferences."
+      />
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Accessibility &amp; Display</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <Label>Font Size</Label>
+            <div className="flex items-center rounded border border-slate-300 dark:border-navy-700 text-slate-600 dark:text-slate-400">
+              <button onClick={decreaseFont} className="flex h-8 w-8 items-center justify-center border-r border-slate-300 dark:border-navy-700 hover:bg-slate-100 dark:bg-navy-800">−</button>
+              <button onClick={resetFont} className="flex h-8 items-center px-3 text-xs font-semibold hover:bg-slate-100 dark:bg-navy-800">Reset</button>
+              <button onClick={increaseFont} className="flex h-8 w-8 items-center justify-center border-l border-slate-300 dark:border-navy-700 hover:bg-slate-100 dark:bg-navy-800">+</button>
+            </div>
+          </div>
+          <div className="flex items-center justify-between">
+            <Label>Language</Label>
+            <div className="flex items-center overflow-hidden rounded border border-slate-300 dark:border-navy-700 text-xs font-medium">
+              <button
+                onClick={() => setLanguage("EN")}
+                className={"px-3 py-1.5 " + (language === "EN" ? "bg-brand-600 text-white" : "bg-white dark:bg-navy-950 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:bg-navy-800")}
+              >
+                English
+              </button>
+              <button
+                onClick={() => setLanguage("HI")}
+                className={"border-l border-slate-300 dark:border-navy-700 px-3 py-1.5 " + (language === "HI" ? "bg-brand-600 text-white" : "bg-white dark:bg-navy-950 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:bg-navy-800")}
+              >
+                हिंदी
+              </button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Decision Thresholds</CardTitle>
+        </CardHeader>
+        <CardContent className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          {THRESHOLD_FIELDS.map((f) => (
+            <div key={f.key} className="space-y-1.5">
+              <Label>{f.label}</Label>
+              <Input type="number" step="0.1" value={form[f.key]} onChange={(e) => setForm({ ...form, [f.key]: Number(e.target.value) })} />
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Similarity Scoring Weights</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
+            {WEIGHT_FIELDS.map((f) => (
+              <div key={f.key} className="space-y-1.5">
+                <Label>{f.label}</Label>
+                <Input type="number" step="0.01" value={form[f.key]} onChange={(e) => setForm({ ...form, [f.key]: Number(e.target.value) })} />
+              </div>
+            ))}
+          </div>
+          <p className={`mt-3 text-xs ${Math.abs(weightSum - 1) < 0.01 ? "text-success-600" : "text-warning-600"}`}>
+            Weights sum to {weightSum.toFixed(2)} (should equal 1.00). Manufacturer only applies when a material is
+            flagged criticality=CRITICAL.
+          </p>
+        </CardContent>
+      </Card>
+
+      {mutation.isError && <p className="text-sm text-danger-600">{apiErrorMessage(mutation.error)}</p>}
+      {mutation.isSuccess && <p className="text-sm text-success-600">Settings saved.</p>}
+
+      <div className="flex justify-end">
+        <Button onClick={() => mutation.mutate(form)} disabled={mutation.isPending}>
+          {mutation.isPending ? "Saving..." : "Save Settings"}
+        </Button>
+      </div>
+    </div>
+  );
+}
